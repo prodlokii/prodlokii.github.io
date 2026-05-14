@@ -1,7 +1,8 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import { ExternalLink, Play, MapPin, Mail } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { motion as Motion } from 'framer-motion';
+import { Play } from 'lucide-react';
 import { FaInstagram, FaSoundcloud } from 'react-icons/fa';
+import { fetchSoundcloudTracksLive } from './lib/fetchSoundcloudTracksLive.js';
 
 const ReactiveHeader = () => {
   const characters = "LOKI".split("");
@@ -11,7 +12,7 @@ const ReactiveHeader = () => {
       <div className="reactive-header">
         <h1 className="neon-glow-text">
           {characters.map((char, index) => (
-            <motion.span
+            <Motion.span
               key={index}
               initial={{ y: 0 }}
               animate={{ y: [0, -20, 0] }}
@@ -24,7 +25,7 @@ const ReactiveHeader = () => {
               style={{ display: "inline-block" }}
             >
               {char}
-            </motion.span>
+            </Motion.span>
           ))}
         </h1>
       </div>
@@ -32,19 +33,111 @@ const ReactiveHeader = () => {
   );
 };
 
-const TRACKS = [
-  { id: 1, title: 'Bubble', url: 'https://soundcloud.com/lok-19200522/bubble-loki' },
-  { id: 2, title: 'Switch', url: 'https://soundcloud.com/lok-19200522/switch-loki' },
-];
+const STAR_COLORS = ['#fff', '#39ff14', '#00ffff', '#ffeb3b'];
+
+/** Deterministic “random” layout for stars (stable across re-renders). */
+function starLayoutForIndex(i) {
+  const r1 = ((i * 9301 + 49297) % 233280) / 233280;
+  const r2 = ((i * 7919 + 23456) % 100000) / 100000;
+  const r3 = ((i * 1103515245 + 12345) >>> 0) / 4294967296;
+  const r4 = (((i + 1) * 2654435761) >>> 0) / 4294967296;
+  const r5 = ((i * 2246822519) >>> 0) / 4294967296;
+  return {
+    x: r1 * 100 + 'vw',
+    y: r2 * 100 + 'vh',
+    duration: 5 + r3 * 10,
+    delay: r4 * 5,
+    fontSize: 20 + r5 * 20 + 'px',
+    color: STAR_COLORS[i % STAR_COLORS.length],
+  };
+}
+
+const tracksJsonUrl = `${import.meta.env.BASE_URL}soundcloud-tracks.json`;
+const tracksApiUrl = '/api/soundcloud-tracks';
 
 const App = () => {
+  const [tracks, setTracks] = useState([]);
+  const [tracksStatus, setTracksStatus] = useState('loading');
+  const starLayouts = useMemo(
+    () => Array.from({ length: 10 }, (_, i) => starLayoutForIndex(i)),
+    [],
+  );
+
+  useEffect(() => {
+    const ac = new AbortController();
+    let cancelled = false;
+
+    const load = async () => {
+      setTracksStatus('loading');
+
+      /** @type {{ fn: () => Promise<unknown[]>, acceptEmpty: boolean }[]} */
+      const strategies = [];
+
+      if (import.meta.env.DEV) {
+        strategies.push({
+          acceptEmpty: false,
+          fn: async () => {
+            const res = await fetch(tracksApiUrl, { signal: ac.signal });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            if (data.error) throw new Error(data.error);
+            return data.tracks;
+          },
+        });
+      }
+
+      strategies.push({
+        acceptEmpty: true,
+        fn: () => fetchSoundcloudTracksLive({ signal: ac.signal }),
+      });
+
+      strategies.push({
+        acceptEmpty: false,
+        fn: async () => {
+          const res = await fetch(tracksJsonUrl, { signal: ac.signal });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          return data.tracks;
+        },
+      });
+
+      let lastError = 'Could not load tracks';
+      for (const { fn, acceptEmpty } of strategies) {
+        try {
+          const t = await fn();
+          if (!Array.isArray(t)) continue;
+          if (t.length > 0 || acceptEmpty) {
+            if (!cancelled) {
+              setTracks(t);
+              setTracksStatus('ok');
+            }
+            return;
+          }
+        } catch (e) {
+          if (e?.name === 'AbortError') return;
+          lastError = e instanceof Error ? e.message : String(e);
+        }
+      }
+      if (!cancelled) {
+        setTracks([]);
+        setTracksStatus(lastError);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, []);
+
   return (
     <div className="app-container">
       {/* Background System */}
       <div className="bg-system">
         <div className="noise-overlay"></div>
         <div className="bg-blobs">
-          <motion.div
+          <Motion.div
             animate={{
               x: [0, 200, -100, 0],
               y: [0, 100, 200, 0],
@@ -53,7 +146,7 @@ const App = () => {
             transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
             className="blob blob-1"
           />
-          <motion.div
+          <Motion.div
             animate={{
               x: [0, -150, 150, 0],
               y: [0, 200, -100, 0],
@@ -62,7 +155,7 @@ const App = () => {
             transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
             className="blob blob-2"
           />
-          <motion.div
+          <Motion.div
             animate={{
               x: [0, 100, -200, 0],
               y: [0, -150, 100, 0],
@@ -75,8 +168,8 @@ const App = () => {
 
         {/* Playful Decorations */}
         <div className="decorations">
-          {[...Array(10)].map((_, i) => (
-            <motion.div
+          {starLayouts.map((star, i) => (
+            <Motion.div
               key={i}
               className="star"
               initial={{ opacity: 0, scale: 0 }}
@@ -84,22 +177,22 @@ const App = () => {
                 opacity: [0.4, 0.8, 0.4],
                 scale: [1, 1.2, 1],
                 rotate: [0, 180, 360],
-                x: Math.random() * 100 + "vw",
-                y: Math.random() * 100 + "vh"
+                x: star.x,
+                y: star.y,
               }}
               transition={{
-                duration: 5 + Math.random() * 10,
+                duration: star.duration,
                 repeat: Infinity,
-                delay: Math.random() * 5
+                delay: star.delay,
               }}
               style={{
                 position: 'absolute',
-                fontSize: 20 + Math.random() * 20 + "px",
-                color: ['#fff', '#39ff14', '#00ffff', '#ffeb3b'][Math.floor(Math.random() * 4)]
+                fontSize: star.fontSize,
+                color: star.color,
               }}
             >
               ★
-            </motion.div>
+            </Motion.div>
           ))}
         </div>
       </div>
@@ -116,7 +209,7 @@ const App = () => {
 
       {/* Hero Section */}
       <section className="hero">
-        <motion.div
+        <Motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
@@ -128,7 +221,7 @@ const App = () => {
             <a href="#tracks" className="btn btn-primary glow">LISTEN NOW</a>
             <a href="https://soundcloud.com/lok-19200522" target="_blank" rel="noreferrer" className="btn btn-secondary">SOUNDCLOUD</a>
           </div>
-        </motion.div>
+        </Motion.div>
       </section>
 
       {/* Tracks Section */}
@@ -138,8 +231,14 @@ const App = () => {
           <div className="header-line"></div>
         </div>
         <div className="track-grid">
-          {TRACKS.map((track, index) => (
-            <motion.div
+          {tracksStatus === 'loading' && (
+            <p className="tracks-status">Loading tracks…</p>
+          )}
+          {tracksStatus !== 'loading' && tracksStatus !== 'ok' && (
+            <p className="tracks-status">{tracksStatus}</p>
+          )}
+          {tracks.map((track, index) => (
+            <Motion.div
               key={track.id}
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
@@ -159,7 +258,7 @@ const App = () => {
               >
                 <Play fill="white" size={20} />
               </a>
-            </motion.div>
+            </Motion.div>
           ))}
         </div>
       </section>
@@ -403,6 +502,14 @@ const App = () => {
           max-width: 1200px;
           margin: 0 auto;
           width: 100%;
+        }
+
+        .tracks-status {
+          grid-column: 1 / -1;
+          text-align: center;
+          font-weight: 700;
+          color: white;
+          font-size: 1.1rem;
         }
 
         .track-card {
